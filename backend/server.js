@@ -20,6 +20,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:4173",
   "https://tutorconnect-five.vercel.app",
+  "https://tutorconnect-is-project-wkih.vercel.app/",
   process.env.CLIENT_URL
 ].filter(Boolean);
 
@@ -55,7 +56,7 @@ app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", 
+    origin: "https://tutorconnect-is-project-wkih.vercel.app/", 
     methods: ["GET", "POST"],
     allowedHeaders: ["ngrok-skip-browser-warning"],
     credentials: true
