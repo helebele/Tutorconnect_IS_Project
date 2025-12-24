@@ -25,8 +25,8 @@ app.use(xss());
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 10 * 60 * 1000,
+  max: 100,
   message: "Too many requests from this IP, please try again later."
 });
 app.use("/api", limiter);
@@ -79,16 +79,56 @@ const io = new Server(server, {
   }
 });
 
+// Socket.IO Security Helpers
+const sanitizeInput = (input) => {
+  if (typeof input === 'string') {
+    // Remove HTML tags, script tags, and dangerous characters
+    return input
+      .trim()
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/javascript:/gi, '')
+      .replace(/on\w+\s*=/gi, '')
+      .substring(0, 1000); // Max length protection
+  }
+  return input;
+};
+
+const sanitizeSocketData = (data) => {
+  if (typeof data === 'object' && data !== null) {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(data)) {
+      sanitized[key] = typeof value === 'string' ? sanitizeInput(value) : value;
+    }
+    return sanitized;
+  }
+  return data;
+};
+
+const validateRoomName = (room) => {
+  if (!room || typeof room !== 'string') return false;
+  // Allow alphanumeric, hyphens, underscores, max 100 chars
+  return /^[a-zA-Z0-9_-]{1,100}$/.test(room);
+};
+
 
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
 
   socket.on("join-room", (room) => {
-    console.log(`User ${socket.id} joining room: ${room}`);
-    socket.join(room);
+    // Validate and sanitize room name
+    const sanitizedRoom = sanitizeInput(room);
+    if (!validateRoomName(sanitizedRoom)) {
+      console.log(`Invalid room name from ${socket.id}:`, room);
+      socket.emit("error", { message: "Invalid room name" });
+      return;
+    }
+
+    console.log(`User ${socket.id} joining room: ${sanitizedRoom}`);
+    socket.join(sanitizedRoom);
 
     // Get all users currently in the room using Socket.io adapter
-    const roomSet = io.sockets.adapter.rooms.get(room);
+    const roomSet = io.sockets.adapter.rooms.get(sanitizedRoom);
     const usersInRoom = [];
     if (roomSet) {
       for (const id of roomSet) {
@@ -98,38 +138,83 @@ io.on("connection", (socket) => {
       }
     }
 
-    console.log(`Other users in room ${room}:`, usersInRoom);
+    console.log(`Other users in room ${sanitizedRoom}:`, usersInRoom);
     socket.emit("all-users", usersInRoom);
 
     // Notify others that a user joined
-    socket.to(room).emit("user-joined", { socketId: socket.id });
+    socket.to(sanitizedRoom).emit("user-joined", { socketId: socket.id });
   });
 
   socket.on("webrtc-offer", ({ room, offer, to }) => {
-    console.log(`[OFFER] from ${socket.id} to ${to} in room ${room}`);
-    if (to) {
+    const sanitizedRoom = sanitizeInput(room);
+    if (!validateRoomName(sanitizedRoom)) {
+      socket.emit("error", { message: "Invalid room name" });
+      return;
+    }
+
+    console.log(`[OFFER] from ${socket.id} to ${to} in room ${sanitizedRoom}`);
+    if (to && typeof to === 'string') {
       io.to(to).emit("webrtc-offer", { from: socket.id, offer });
     }
   });
 
   socket.on("webrtc-answer", ({ room, answer, to }) => {
-    console.log(`[ANSWER] from ${socket.id} to ${to} in room ${room}`);
-    if (to) {
+    const sanitizedRoom = sanitizeInput(room);
+    if (!validateRoomName(sanitizedRoom)) {
+      socket.emit("error", { message: "Invalid room name" });
+      return;
+    }
+
+    console.log(`[ANSWER] from ${socket.id} to ${to} in room ${sanitizedRoom}`);
+    if (to && typeof to === 'string') {
       io.to(to).emit("webrtc-answer", { from: socket.id, answer });
     }
   });
 
   socket.on("webrtc-candidate", ({ room, candidate, to }) => {
-    console.log(`[CANDIDATE] from ${socket.id} to ${to} in room ${room}`);
-    if (to) {
+    const sanitizedRoom = sanitizeInput(room);
+    if (!validateRoomName(sanitizedRoom)) {
+      socket.emit("error", { message: "Invalid room name" });
+      return;
+    }
+
+    console.log(`[CANDIDATE] from ${socket.id} to ${to} in room ${sanitizedRoom}`);
+    if (to && typeof to === 'string') {
       io.to(to).emit("webrtc-candidate", { from: socket.id, candidate });
     }
   });
 
-  // Chat Event
+  // Chat Event with XSS Protection
   socket.on("chat-message", ({ room, message, username }) => {
-    console.log(`[CHAT] in ${room} from ${username}`);
-    socket.to(room).emit("chat-message", { from: socket.id, message, username });
+    // Sanitize all user inputs
+    const sanitizedRoom = sanitizeInput(room);
+    const sanitizedMessage = sanitizeInput(message);
+    const sanitizedUsername = sanitizeInput(username);
+
+    // Validate room name
+    if (!validateRoomName(sanitizedRoom)) {
+      socket.emit("error", { message: "Invalid room name" });
+      return;
+    }
+
+    // Validate message length (prevent spam)
+    if (!sanitizedMessage || sanitizedMessage.length > 1000) {
+      socket.emit("error", { message: "Invalid message length" });
+      return;
+    }
+
+    // Validate username
+    if (!sanitizedUsername || sanitizedUsername.length > 50) {
+      socket.emit("error", { message: "Invalid username" });
+      return;
+    }
+
+    console.log(`[CHAT] in ${sanitizedRoom} from ${sanitizedUsername}`);
+    socket.to(sanitizedRoom).emit("chat-message", {
+      from: socket.id,
+      message: sanitizedMessage,
+      username: sanitizedUsername
+    });
   });
 
   socket.on("disconnecting", () => {
