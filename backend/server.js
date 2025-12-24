@@ -128,7 +128,7 @@ io.on("connection", (socket) => {
 
   // Chat Event
   socket.on("chat-message", ({ room, message, username }) => {
-    console.log(`[CHAT] in ${room} from ${username}: ${message}`);
+    console.log(`[CHAT] in ${room} from ${username}`);
     socket.to(room).emit("chat-message", { from: socket.id, message, username });
   });
 
