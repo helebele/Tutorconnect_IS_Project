@@ -38,7 +38,7 @@ export const createSession = async (req, res) => {
 
 export const getSessionsForUser = async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = req.user._id; // Securely get ID from token, ignoring params
     const sessions = await Session.find({
       $or: [{ tutorId: userId }, { studentId: userId }]
     }).populate("classId tutorId studentId", "title name email");

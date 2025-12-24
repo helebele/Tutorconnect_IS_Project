@@ -4,6 +4,10 @@ import cors from "cors";
 import http from "http";
 import { Server } from "socket.io";
 import connectDB from "./db.js";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import mongoSanitize from "express-mongo-sanitize";
+import xss from "xss-clean";
 
 import userRoutes from "./routes/userRoutes.js";
 import classRoutes from "./routes/classRoutes.js";
@@ -13,6 +17,20 @@ dotenv.config();
 connectDB();
 
 const app = express();
+
+// Security Middleware
+app.use(helmet());
+app.use(mongoSanitize());
+app.use(xss());
+
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: "Too many requests from this IP, please try again later."
+});
+app.use("/api", limiter);
+
 app.use(express.json());
 
 // CORS configuration
@@ -25,17 +43,15 @@ const allowedOrigins = [
 ].filter(Boolean);
 
 app.use(cors({
-  origin: function(origin, callback) {
+  origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
-    
-    // Allow all origins for development (you can restrict this later)
+
     if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
       return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
     }
-    
-    // For now, allow all origins to debug
-    return callback(null, true);
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
@@ -56,8 +72,8 @@ app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "https://tutorconnect-is-project-wkih.vercel.app/", 
-    methods: ["GET", "POST"],
+    origin: ["https://tutorconnect-is-project-wkih.vercel.app/", "http://localhost:5173",
+      "http://localhost:4173"],
     allowedHeaders: ["ngrok-skip-browser-warning"],
     credentials: true
   }
@@ -68,9 +84,9 @@ io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
 
   socket.on("join-room", (room) => {
-    console.log(`👤 User ${socket.id} joining room: ${room}`);
+    console.log(`User ${socket.id} joining room: ${room}`);
     socket.join(room);
-    
+
     // Get all users currently in the room using Socket.io adapter
     const roomSet = io.sockets.adapter.rooms.get(room);
     const usersInRoom = [];
@@ -82,7 +98,7 @@ io.on("connection", (socket) => {
       }
     }
 
-    console.log(`👥 Other users in room ${room}:`, usersInRoom);
+    console.log(`Other users in room ${room}:`, usersInRoom);
     socket.emit("all-users", usersInRoom);
 
     // Notify others that a user joined
@@ -90,21 +106,21 @@ io.on("connection", (socket) => {
   });
 
   socket.on("webrtc-offer", ({ room, offer, to }) => {
-    console.log(`📡 [OFFER] from ${socket.id} to ${to} in room ${room}`);
+    console.log(`[OFFER] from ${socket.id} to ${to} in room ${room}`);
     if (to) {
       io.to(to).emit("webrtc-offer", { from: socket.id, offer });
     }
   });
 
   socket.on("webrtc-answer", ({ room, answer, to }) => {
-    console.log(`📡 [ANSWER] from ${socket.id} to ${to} in room ${room}`);
+    console.log(`[ANSWER] from ${socket.id} to ${to} in room ${room}`);
     if (to) {
       io.to(to).emit("webrtc-answer", { from: socket.id, answer });
     }
   });
 
   socket.on("webrtc-candidate", ({ room, candidate, to }) => {
-    console.log(`📡 [CANDIDATE] from ${socket.id} to ${to} in room ${room}`);
+    console.log(`[CANDIDATE] from ${socket.id} to ${to} in room ${room}`);
     if (to) {
       io.to(to).emit("webrtc-candidate", { from: socket.id, candidate });
     }
@@ -112,7 +128,7 @@ io.on("connection", (socket) => {
 
   // Chat Event
   socket.on("chat-message", ({ room, message, username }) => {
-    console.log(`💬 [CHAT] in ${room} from ${username}: ${message}`);
+    console.log(`[CHAT] in ${room} from ${username}: ${message}`);
     socket.to(room).emit("chat-message", { from: socket.id, message, username });
   });
 
@@ -120,7 +136,7 @@ io.on("connection", (socket) => {
     // Notify all rooms the user was in before they leave
     for (const room of socket.rooms) {
       if (room !== socket.id) {
-        console.log(`👋 User ${socket.id} leaving room: ${room}`);
+        console.log(`User ${socket.id} leaving room: ${room}`);
         socket.to(room).emit("user-disconnected", socket.id);
       }
     }
